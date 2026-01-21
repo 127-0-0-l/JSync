@@ -3,85 +3,105 @@ package org.steel;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.jline.utils.InfoCmp;
+import org.tinylog.Logger;
 
+import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
 
-public class ConsoleManager {
-    private static int _consoleWidth;
-    private static int _progressBarMaxWidth = 100;
+public final class ConsoleManager {
+    private static int consoleWidth;
+    private static final int PROGRESS_BAR_MAX_WIDTH;
     private static Terminal terminal;
 
-    static{
+    static {
+        Logger.info("init console manager");
+
+        int tmpPBWidth;
+        try (InputStream is = FileSync.class.getResourceAsStream("/ConsoleManager.properties")) {
+            Properties prop = new Properties();
+            prop.load(is);
+            tmpPBWidth = Integer.parseInt(prop.getProperty("progressBar.maxWidth"));
+        } catch (Exception e) {
+            Logger.warn(e);
+            tmpPBWidth = 100;
+        }
+        PROGRESS_BAR_MAX_WIDTH = tmpPBWidth;
+
         try {
             terminal = TerminalBuilder.builder()
                     .system(true)
                     .build();
             terminal.puts(InfoCmp.Capability.clear_screen);
-        } catch (IOException e) { }
+        } catch (IOException e) {
+            Logger.error(e);
+        }
     }
 
-    public static void writeLine(String string){
-        System.out.println(string);
+    public static void writeLine(String line) {
+        if (line.length() > consoleWidth){
+            System.out.println(makeConsoleRow(line));
+        } else{
+            System.out.println(line);
+        }
+
+        Logger.info(line);
     }
 
-    public static void rewriteLines(String[] lines)
-    {
+    public static void writeLine(){
+        System.out.println();
+    }
+
+    public static void rewriteLines(String[] lines) {
         if (lines.length < 1)
             return;
 
         checkResize();
 
-        try
-        {
-            terminal.puts(InfoCmp.Capability.cursor_address,
-                    Math.max(0, terminal.getCursorPosition(c -> {}).getY() - (lines.length - 1)),
-                    0);
+        terminal.puts(InfoCmp.Capability.cursor_address,
+                Math.max(0, terminal.getCursorPosition(c -> {
+                }).getY() - (lines.length - 1)),
+                0);
 
-            for (int i = 0; i < lines.length; i++)
-            {
-                lines[i] = makeConsoleRow(lines[i]);
+        for (int i = 0; i < lines.length; i++) {
+            lines[i] = makeConsoleRow(lines[i]);
 
-                if (i == lines.length - 1)
-                    System.out.print(lines[i]);
-                else
-                    System.out.println(lines[i]);
-            }
+            if (i == lines.length - 1)
+                System.out.print(lines[i]);
+            else
+                System.out.println(lines[i]);
         }
-        catch (Exception e){
-            System.out.println(e.getLocalizedMessage());
-        }
+
+        Logger.info(String.join("\n\t", lines));
     }
 
-    public static void rewriteLinesWithProgress(String[] lines, int percentage)
-    {
+    public static void rewriteLinesWithProgress(String[] lines, int percentage) {
         if (lines.length < 1 || percentage < 0 || percentage > 100)
             return;
 
         checkResize();
 
-        try
-        {
-            terminal.puts(InfoCmp.Capability.cursor_address,
-                    Math.max(0, terminal.getCursorPosition(c -> {}).getY() - lines.length),
-                    0);
+        terminal.puts(InfoCmp.Capability.cursor_address,
+                Math.max(0, terminal.getCursorPosition(c -> {
+                }).getY() - lines.length),
+                0);
 
-            for (int i = 0; i < lines.length; i++)
-            {
-                lines[i] = makeConsoleRow(lines[i]);
-                System.out.println(lines[i]);
-            }
-
-            System.out.print(getProgressBar(percentage));
+        for (int i = 0; i < lines.length; i++) {
+            lines[i] = makeConsoleRow(lines[i]);
+            System.out.println(lines[i]);
         }
-        catch (Exception e) { }
+
+        Logger.info(String.join("\n\t", lines));
+
+        System.out.print(getProgressBar(percentage));
     }
 
-    private static String getProgressBar(int percentage)
-    {
+    private static String getProgressBar(int percentage) {
         String begining = "[";
         String ending = String.format("] %s%%", percentage);
 
-        int length = Math.min(_progressBarMaxWidth, _consoleWidth);
+        int length = Math.min(PROGRESS_BAR_MAX_WIDTH, consoleWidth);
         int pbLength = length - begining.length() - ending.length();
 
         StringBuilder result = new StringBuilder();
@@ -98,13 +118,11 @@ public class ConsoleManager {
         return result.toString();
     }
 
-    private static String makeConsoleRow(String str)
-    {
-        char[] newStr = new char[_consoleWidth];
-        for (int i = 0; i < _consoleWidth; i++)
-        {
+    private static String makeConsoleRow(String str) {
+        char[] newStr = new char[consoleWidth];
+        for (int i = 0; i < consoleWidth; i++) {
             if (i < str.length())
-                newStr[i] = (i >= _consoleWidth - 3) && (str.length() > _consoleWidth) ? '.' : str.charAt(i);
+                newStr[i] = (i >= consoleWidth - 3) && (str.length() > consoleWidth) ? '.' : str.charAt(i);
             else
                 newStr[i] = ' ';
         }
@@ -112,11 +130,10 @@ public class ConsoleManager {
         return new String(newStr);
     }
 
-    private static void checkResize()
-    {
+    private static void checkResize() {
         int width = terminal.getWidth();
 
-        if (_consoleWidth != width)
-            _consoleWidth = width;
+        if (consoleWidth != width)
+            consoleWidth = width;
     }
 }

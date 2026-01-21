@@ -13,12 +13,9 @@ public class FileSync {
 
             FileSynchronizer fs = new FileSynchronizer(sourcePath, destinationPath);
             fs.synchronize();
-        } catch (IllegalArgumentException e){
-            System.out.println(e.getMessage());
-            Logger.error(e.getMessage());
         } catch (Exception e){
             System.out.println(e.getMessage());
-            Logger.error(e, e.getMessage());
+            Logger.error(e);
         }
     }
 }

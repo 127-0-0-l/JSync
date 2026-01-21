@@ -1,6 +1,7 @@
 package org.steel;
 
 import org.tinylog.Logger;
+
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -14,142 +15,135 @@ import java.util.stream.Stream;
 import static org.steel.ConsoleManager.*;
 
 public class FileSynchronizer {
-    private final Path _sourceDirectory;
-    private final Path _destinationDirectory;
-    private Queue<DiskTask> _diskTasks = new LinkedList<>();
-    private List<String> _failedToDelete = new ArrayList<>();
-    private List<String> _failedToCopy = new ArrayList<>();
-    private List<String> _failedToScan = new ArrayList<>();
-    private long _commonSize = 0;
+    private final Path sourcePath;
+    private final Path destinationPath;
+    private final Queue<DiskTask> diskTasks = new LinkedList<>();
+    private final List<String> failedToDelete = new ArrayList<>();
+    private final List<String> failedToCopy = new ArrayList<>();
+    private final List<String> failedToScan = new ArrayList<>();
+    private long commonSize = 0;
 
-    public FileSynchronizer(String sourcePath, String destinationPath)
-    {
-        _sourceDirectory = Path.of(sourcePath);
-        _destinationDirectory = Path.of(destinationPath);
+    public FileSynchronizer(String sourcePath, String destinationPath) {
+        this.sourcePath = Path.of(sourcePath);
+        this.destinationPath = Path.of(destinationPath);
     }
 
-    public void synchronize() throws Exception {
-        if (!isPathsValid())
-            throw new Exception("invalid path");
+    public void synchronize() {
+        if (!isPathsValid()) {
+            String msg = String.format("invalid paths: (source: %s) (destination: %s)",
+                    sourcePath.toString(), destinationPath.toString());
+            Logger.error(msg);
+            System.out.println(msg);
+            return;
+        }
 
         writeLine("scanning...");
-        scanDirectories(_sourceDirectory, _destinationDirectory);
+        scanDirectories(sourcePath, destinationPath);
 
-        long dirToDelete = _diskTasks.stream()
-                .filter(t -> !t.IsFile && t.TaskType == DiskTaskType.Delete)
+        long dirToDelete = diskTasks.stream()
+                .filter(t -> !t.isFile() && t.taskType() == DiskTaskType.DELETE)
                 .count();
-        long filesToDelete = _diskTasks.stream()
-                .filter(t -> t.IsFile && t.TaskType == DiskTaskType.Delete)
+        long filesToDelete = diskTasks.stream()
+                .filter(t -> t.isFile() && t.taskType() == DiskTaskType.DELETE)
                 .count();
-        long filesToCopy = _diskTasks.stream()
-                .filter(t -> t.IsFile && t.TaskType == DiskTaskType.Copy)
+        long filesToCopy = diskTasks.stream()
+                .filter(t -> t.isFile() && t.taskType() == DiskTaskType.COPY)
                 .count();
 
-        rewriteLines(new String[]
-        {
-            "scanning complete",
-            String.format("%s directories %s files to delete", dirToDelete, filesToDelete)
-        });
+        rewriteLines(new String[] {
+                        "scanning complete",
+                        String.format("%s directories %s files to delete", dirToDelete, filesToDelete)
+                });
         writeLine(String.format("\n%s filesToCopy", filesToCopy));
 
         writeLine("\nsyncing...\n\n");
         syncDirectories();
 
-        if (_failedToScan.toArray().length > 0){
+        if (!failedToScan.isEmpty()) {
             writeLine("\nfailed to scan:");
-            for (var item : _failedToScan)
+            for (var item : failedToScan)
                 writeLine(item);
         }
 
-        if (_failedToDelete.toArray().length > 0)
-        {
+        if (!failedToDelete.isEmpty()) {
             writeLine("\nfailed to delete:");
-            for (var item : _failedToDelete)
+            for (var item : failedToDelete)
                 writeLine(item);
         }
 
-        if (_failedToCopy.toArray().length > 0)
-        {
+        if (!failedToCopy.isEmpty()) {
             writeLine("\nfailed to copy:");
-            for (var item : _failedToCopy)
+            for (var item : failedToCopy)
                 writeLine(item);
         }
     }
 
-    private void scanDirectories(Path source, Path destination) throws IOException {
-        rewriteLines(new String[] { source.toString().replace(" ", "") });
+    private void scanDirectories(Path source, Path destination) {
+        rewriteLines(new String[]{source.toString().replace(" ", "")});
 
-        try{
+        try {
             // delete directories
-            for (var directory : getDirectories(destination))
-            {
-                if (!Files.exists(Path.of(source.toString(), directory.getFileName().toString())))
-                {
+            for (var directory : getDirectories(destination)) {
+                if (!Files.exists(Path.of(source.toString(), directory.getFileName().toString()))) {
                     enqueueDelete(directory.toString(), false);
-                    _commonSize++;
+                    commonSize++;
                 }
             }
 
             // create directories
-            for (var directory : getDirectories(source))
-            {
+            for (var directory : getDirectories(source)) {
                 Path destDirectory = Path.of(destination.toString(), directory.getFileName().toString());
                 if (!Files.exists(destDirectory)) {
-                    try {
-                        Files.createDirectory(destDirectory);
-                    } catch (IOException e) {}
+                    Files.createDirectory(destDirectory);
                 }
 
                 scanDirectories(directory, destDirectory);
             }
 
             // delete files
-            for (var file : getFiles(destination))
-            {
+            for (var file : getFiles(destination)) {
                 Path sourceFile = Path.of(source.toString(), file.getFileName().toString());
-                if (!Files.exists(sourceFile))
-                {
+                if (!Files.exists(sourceFile)) {
                     enqueueDelete(file.toString(), true);
-                    _commonSize++;
-                }
-                else if (Files.getLastModifiedTime(sourceFile).toMillis() != Files.getLastModifiedTime(file).toMillis()){
+                    commonSize++;
+                } else if (Files.getLastModifiedTime(sourceFile).toMillis() != Files.getLastModifiedTime(file).toMillis()) {
                     enqueueDelete(file.toString(), true);
-                    _commonSize++;
+                    commonSize++;
                     enqueueCopy(sourceFile.toString(), file.toString());
-                    _commonSize += Files.size(sourceFile);
+                    commonSize += Files.size(sourceFile);
                 }
             }
 
             // copy files
-            for (var file : getFiles(source))
-            {
+            for (var file : getFiles(source)) {
                 Path destFile = Path.of(destination.toString(), file.getFileName().toString());
-                if (!Files.exists(destFile))
-                {
+                if (!Files.exists(destFile)) {
                     enqueueCopy(file.toString(), destFile.toString());
-                    _commonSize += Files.size(file);
+                    commonSize += Files.size(file);
                 }
             }
-        }
-        catch (Exception e){
-            _failedToScan.add(String.format("source: %s; destination: %s", source, destination));
+        } catch (Exception e) {
+            String scanStr = String.format("(source: %s) (destination: %s)", source, destination);
+            String errMsg = "failed to scan directories: " + scanStr;
+            failedToScan.add(scanStr);
+            Logger.warn(errMsg);
         }
     }
 
-    private List<Path> getDirectories(Path path){
+    private List<Path> getDirectories(Path path) {
         try (Stream<Path> stream = Files.list(path)) {
-            List<Path> subFolders = stream
+            List<Path> subDirs = stream
                     .filter(Files::isDirectory)
                     .toList();
-            if (subFolders.size() > 0)
-                return subFolders;
+            if (subDirs.size() > 0)
+                return subDirs;
         } catch (IOException e) {
-            e.printStackTrace();
+            Logger.warn(e);
         }
         return new ArrayList<>();
     }
 
-    private List<Path> getFiles(Path path){
+    private List<Path> getFiles(Path path) {
         try (Stream<Path> stream = Files.list(path)) {
             List<Path> files = stream
                     .filter(f -> !Files.isDirectory(f))
@@ -157,74 +151,66 @@ public class FileSynchronizer {
             if (files.size() > 0)
                 return files;
         } catch (IOException e) {
-            e.printStackTrace();
+            Logger.warn(e);
         }
         return new ArrayList<>();
     }
 
-    private void syncDirectories()
-    {
+    private void syncDirectories() {
         long processed = 0;
 
-        int dtCount = _diskTasks.toArray().length;
-        for (int i = 0; i < dtCount; i++)
-        {
-            int percantage = (int)((processed * 100) / dtCount);
-            DiskTask item = _diskTasks.poll();
+        int dtCount = diskTasks.toArray().length;
+        for (int i = 0; i < dtCount; i++) {
+            int percantage = (int) ((processed * 100) / dtCount);
+            DiskTask item = diskTasks.poll();
 
-            switch (item.TaskType)
-            {
-                case DiskTaskType.Delete:
+            switch (item.taskType()) {
+                case DiskTaskType.DELETE:
                     rewriteLinesWithProgress(
-                            new String[] {String.format("delete %s", item.DestinationPath), getProgressInfoString(processed) },
+                            new String[]{String.format("delete %s", item.destinationPath()), getProgressInfoString(processed)},
                             percantage);
 
-                    try
-                    {
-                        if (item.IsFile)
-                            Files.deleteIfExists(Path.of(item.DestinationPath));
+                    try {
+                        if (item.isFile())
+                            Files.deleteIfExists(Path.of(item.destinationPath()));
                         else
-                            deleteDirectory(Path.of(item.DestinationPath));
-                    }
-                    catch(Exception e)
-                    {
-                        try
-                        {
-                            forceDelete(Path.of(item.DestinationPath), item.IsFile);
-                        }
-                        catch (Exception ex)
-                        {
-                            _failedToDelete.add(item.DestinationPath);
+                            deleteDirectory(Path.of(item.destinationPath()));
+                    } catch (Exception e) {
+                        Logger.warn(e);
+                        try {
+                            forceDelete(Path.of(item.destinationPath()), item.isFile());
+                        } catch (Exception ex) {
+                            failedToDelete.add(item.destinationPath());
+                            Logger.warn(ex);
                         }
                     }
 
-                processed++;
-                break;
-                case DiskTaskType.Copy:
-                    Logger.info(String.format("copy %s", item.SourcePath));
+                    processed++;
+                    break;
+                case DiskTaskType.COPY:
                     rewriteLinesWithProgress(
-                            new String[] { String.format("copy %s", item.SourcePath), getProgressInfoString(processed) },
+                            new String[]{String.format("copy %s", item.sourcePath()), getProgressInfoString(processed)},
                             percantage);
 
-                    if (item.IsFile)
-                        try (FileInputStream sourceStream = new FileInputStream(item.SourcePath);
-                                FileOutputStream destinationStream = new FileOutputStream(item.DestinationPath)){
+                    if (item.isFile())
+                        try (FileInputStream sourceStream = new FileInputStream(item.sourcePath());
+                             FileOutputStream destinationStream = new FileOutputStream(item.destinationPath())) {
                             int kb = 4;
                             byte[] buffer = new byte[1024 * kb];
                             int bytesRead = 0;
 
                             int counter = 0;
                             int counterMax = 1024 / kb;
-                            while((bytesRead = sourceStream.read(buffer, 0, buffer.length)) != -1)
-                            {
+                            while ((bytesRead = sourceStream.read(buffer, 0, buffer.length)) != -1) {
                                 destinationStream.write(buffer, 0, bytesRead);
                                 processed += bytesRead;
                                 counter++;
-                                if (counter == counterMax)
-                                {
-                                    percantage = (int)((processed * 100) / _commonSize);
+                                if (counter == counterMax) {
+                                    percantage = (int) ((processed * 100) / commonSize);
                                     rewriteLinesWithProgress(
-                                            new String[] { String.format("copy %s", item.SourcePath), getProgressInfoString(processed) },
+                                            new String[]{
+                                                    String.format("copy %s", item.sourcePath()),
+                                                    getProgressInfoString(processed)},
                                             percantage);
                                     counter = 0;
                                 }
@@ -232,42 +218,40 @@ public class FileSynchronizer {
                             sourceStream.close();
                             destinationStream.close();
 
-                            BasicFileAttributes attr = Files.readAttributes(Path.of(item.SourcePath), BasicFileAttributes.class);
-                            Files.getFileAttributeView(Path.of(item.DestinationPath), BasicFileAttributeView.class)
+                            BasicFileAttributes attr = Files.readAttributes(
+                                    Path.of(item.sourcePath()), BasicFileAttributes.class);
+                            Files.getFileAttributeView(Path.of(item.destinationPath()), BasicFileAttributeView.class)
                                     .setTimes(attr.lastModifiedTime(), null, attr.creationTime());
 
-                        }
-                        catch(Exception e)
-                        {
-                            _failedToCopy.add(item.SourcePath);
+                        } catch (Exception e) {
+                            failedToCopy.add(item.sourcePath());
+                            Logger.warn(e);
                         }
                     break;
             }
         }
 
-        rewriteLinesWithProgress(new String[] { "", "syncing complete" }, 100);
-        writeLine("");
+        rewriteLinesWithProgress(new String[]{"", "syncing complete"}, 100);
+        writeLine();
     }
 
     private void deleteDirectory(Path path) throws IOException {
         Stream<Path> walk = Files.walk(path);
         walk.sorted(Comparator.reverseOrder())
-                .forEach(p ->
-                {
-                    try{
+                .forEach(p -> {
+                    try {
                         Files.delete(p);
-                    } catch (IOException e) {}
+                    } catch (IOException e) {
+                        Logger.warn(e);
+                    }
                 });
     }
 
     private void forceDelete(Path path, boolean isFile) throws IOException {
-        if (isFile)
-        {
+        if (isFile) {
             Files.setAttribute(path, "dos:readonly", false);
             Files.delete(path);
-        }
-        else
-        {
+        } else {
             for (var dir : getDirectories(path))
                 if (dir != null)
                     forceDelete(dir, false);
@@ -279,30 +263,21 @@ public class FileSynchronizer {
         }
     }
 
-    private boolean isPathsValid(){
-        return Files.isDirectory(_sourceDirectory) && Files.isDirectory(_destinationDirectory);
+    private boolean isPathsValid() {
+        return Files.isDirectory(sourcePath) && Files.isDirectory(destinationPath);
     }
 
-    private String getProgressInfoString(long processed){
-        return String.format("%s / %s MB", processed / 1024 / 1024, _commonSize / 1024 / 1024);
+    private String getProgressInfoString(long processed) {
+        return String.format("%s / %s MB", processed / 1024 / 1024, commonSize / 1024 / 1024);
     }
 
-    private void enqueueDelete(String path, boolean isFile)
-    {
-        var task = new DiskTask();
-        task.TaskType = DiskTaskType.Delete;
-        task.DestinationPath = path;
-        task.IsFile = isFile;
-        _diskTasks.offer(task);
+    private void enqueueDelete(String path, boolean isFile) {
+        var task = new DiskTask(DiskTaskType.DELETE, "", path, isFile);
+        diskTasks.offer(task);
     }
 
-    private void enqueueCopy(String sourcePath, String destinationPath)
-    {
-        var task = new DiskTask();
-        task.TaskType = DiskTaskType.Copy;
-        task.SourcePath = sourcePath;
-        task.DestinationPath = destinationPath;
-        task.IsFile = true;
-        _diskTasks.offer(task);
+    private void enqueueCopy(String sourcePath, String destinationPath) {
+        var task = new DiskTask(DiskTaskType.COPY, sourcePath, destinationPath, true);
+        diskTasks.offer(task);
     }
 }
