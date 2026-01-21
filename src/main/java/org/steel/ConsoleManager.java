@@ -15,6 +15,8 @@ public final class ConsoleManager {
     private static final int PROGRESS_BAR_MAX_WIDTH;
     private static Terminal terminal;
 
+    private ConsoleManager(){}
+
     static {
         Logger.info("init console manager");
 
